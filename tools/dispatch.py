@@ -494,7 +494,7 @@ def _is_truck_payment(kind):
     return "truck" in k and "payment" in k
 
 
-def statement_payments(days=14):
+def statement_payments(days=14, only_units=None):
     """Posted Datatruck settlements of the last `days` days -> truck-payment deductions per truck unit.
     Yields (unit, {"id", "date", "amount", "st", "payee"})."""
     c = _dt()
@@ -510,6 +510,8 @@ def statement_payments(days=14):
         if st.get("status") != "posted":
             continue
         units = [str(t["unit_number"]).lstrip("0") for t in st.get("trucks", [])]
+        if only_units is not None and not set(units) & only_units:
+            continue  # only open statements of sold trucks (each needs 2 API calls)
         lo, hi = st.get("from_date") or st["date"], st["date"]
         ch = c.call("GET", f"/v1/salary/settlement/charges/{st['id']}/")
         items = []
@@ -532,7 +534,7 @@ def sync_statements(days=14, dry=False):
     by_unit = {str(d["unit"]).lstrip("0"): d for d in s.all("deals")
                if d.get("sold") and (d["sold"].get("status") or "Active") == "Active" and d.get("unit") not in (None, "")}
     added = []
-    for u, it in statement_payments(days):
+    for u, it in statement_payments(days, set(by_unit)):
         d = by_unit.get(u)
         if not d or it["date"] < d["sold"].get("statements_since", STATEMENTS_START):
             continue
