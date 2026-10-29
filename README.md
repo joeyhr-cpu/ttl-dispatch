@@ -60,7 +60,7 @@ It runs `dispatch.py check --telegram`. The result goes to Joey's Telegram Saved
 
 - The charge ID makes the sync idempotent, so running it twice never counts a payment twice.
 - Only payments dated after 2026-10-29 are added. Earlier ones are already in the sold sheet totals.
-- The payee can be the driver who runs the buyer's truck (for example Orzu Trans 3625 → Christopher Merchant). The note keeps the statement number, so this can be traced.
+- The payee can be the driver who runs the buyer's truck. The note keeps the statement number, so this can be traced.
 
 ## Photos
 

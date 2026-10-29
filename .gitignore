@@ -9,3 +9,5 @@ docs/version.json
 __pycache__/
 .env
 dispatch-oauth-*.json
+# local-only tools that reference private sheets
+tools/import_sheets.py
