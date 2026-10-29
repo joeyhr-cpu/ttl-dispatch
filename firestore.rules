@@ -1,0 +1,27 @@
+rules_version = '2';
+// Only signed-in users with an active users/{uid} doc see CRM data.
+// The driver ads page reads public_trucks / public_config, which hold no driver, deal or cost data.
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function profile() { return get(/databases/$(db)/documents/users/$(request.auth.uid)).data; }
+    function active() { return signedIn() && exists(/databases/$(db)/documents/users/$(request.auth.uid)) && profile().active == true; }
+    function admin() { return active() && profile().role == 'admin'; }
+
+    match /public_trucks/{unit} { allow read: if true; allow write: if active(); }
+    match /public_config/{id}  { allow read: if true; allow write: if admin(); }
+
+    // First admin: the owner signs up in the app, verifies the email, and may then create their own admin profile.
+    function isOwner() { return signedIn() && request.auth.token.email == 'joey@taylorfreight.com' && request.auth.token.email_verified == true; }
+    match /users/{uid}   {
+      allow read: if active() || (signedIn() && request.auth.uid == uid);
+      allow write: if admin();
+      allow create: if isOwner() && request.auth.uid == uid && request.resource.data.role == 'admin' && request.resource.data.active == true;
+    }
+    match /config/{id}   { allow read: if active(); allow write: if admin(); }
+    match /trucks/{id}   { allow read, create, update: if active(); allow delete: if admin(); }
+    match /drivers/{id}  { allow read, create, update: if active(); allow delete: if admin(); }
+    match /deals/{id}    { allow read, create, update: if active(); allow delete: if admin(); }
+    match /activity/{id} { allow read, create: if active(); }
+  }
+}

@@ -1,0 +1,11 @@
+# No CRM data or secrets ever go in this public repo. Data lives in Firestore.
+data/
+backups/
+docs/data.json
+docs/data.enc
+docs/version.json
+*-firebase-key.json
+*.tmp
+__pycache__/
+.env
+dispatch-oauth-*.json

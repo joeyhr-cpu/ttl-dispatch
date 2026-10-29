@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trucks for lease-to-purchase</title>
+<meta name="description" content="Lease-to-purchase trucks available now.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- Public driver ads page. Reads only public_trucks / public_config: specs, photos and weekly price.
+     No driver, deal, cost or salesman data exists in those collections. -->
+<div class="dv-wrap" id="ads">
+  <div class="dv-head">
+    <div class="brand-mark" id="brand">TTL</div>
+    <div><b id="appName">Trucks</b><div class="faint sm">Lease-to-purchase trucks</div></div>
+    <div style="margin-left:auto" id="callBtn"></div>
+  </div>
+  <div id="view"><div class="empty">Loading trucks…</div></div>
+</div>
+<div class="lightbox" id="lightbox"><button class="lb-close" data-lb="close">×</button><button class="lb-nav lb-prev" data-lb="-1">‹</button><img id="lbImg" alt=""><button class="lb-nav lb-next" data-lb="1">›</button><div class="lb-caption" id="lbCaption"></div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = n => n == null || isNaN(n) ? "—" : Number(n).toLocaleString("en-US", {maximumFractionDigits: 0});
+const months = t => t.term_weeks ? Math.round(t.term_weeks / 4.333) : null;
+const title = t => [t.year, t.make, t.model].filter(Boolean).join(" ") || "Truck";
+let trucks = [], site = {}, lb = {photos: [], i: 0};
+
+async function load() {
+  const cfg = window.FIREBASE_CONFIG || {};
+  if (cfg.projectId) {
+    firebase.initializeApp(cfg);
+    const db = firebase.firestore();
+    const [ts, sc] = await Promise.all([db.collection("public_trucks").get(), db.collection("public_config").doc("site").get()]);
+    trucks = ts.docs.map(d => d.data());
+    site = sc.exists ? sc.data() : {};
+  } else {
+    // local demo only
+    const d = await (await fetch("data.json", {cache: "no-store"})).json();
+    trucks = d.trucks.filter(t => !t.status);
+    site = {contact_phone: d.fees?.contact_phone};
+  }
+  trucks.sort((a, b) => (b.year || 0) - (a.year || 0) || (a.miles || 0) - (b.miles || 0));
+  document.title = (window.APP_NAME || "Trucks") + " — trucks for sale";
+  $("#appName").textContent = window.APP_NAME || "Trucks";
+  $("#brand").textContent = window.APP_BRAND || "";
+  if (site.contact_phone) $("#callBtn").innerHTML = `<a class="btn primary" href="tel:${esc(site.contact_phone)}">📞 ${esc(site.contact_phone)}</a>`;
+  route();
+}
+function route() {
+  const unit = decodeURIComponent(location.hash.slice(1));
+  const t = unit && trucks.find(x => String(x.unit) === unit);
+  const v = $("#view");
+  if (unit && !t) { v.innerHTML = `<a href="#">← All trucks</a><div class="empty">This truck is no longer available.</div>`; return; }
+  if (t) {
+    v.innerHTML = `<a href="#">← All trucks</a><h1 style="margin:10px 0 4px">${esc(title(t))}</h1>
+      <div class="muted">Unit ${esc(t.unit)} · ${fmt(t.miles)} miles${t.apu ? " · APU" : ""}${t.warranty ? " · Warranty option" : ""}</div>
+      <div class="kpigrid g3" style="margin-top:16px">
+        <div class="kpi"><div class="label">Weekly</div><div class="val num">$${fmt(t.weekly || 1000)}</div><div class="delta">truck payment</div></div>
+        <div class="kpi"><div class="label">Term</div><div class="val num">${months(t) || "—"} mo</div><div class="delta">${t.term_weeks ? t.term_weeks + " weeks" : ""}</div></div>
+        <div class="kpi"><div class="label">Miles</div><div class="val num">${fmt(t.miles)}</div><div class="delta">${esc(t.engine || "")}</div></div></div>
+      <div class="photos">${(t.photos || []).map((p, i) => `<img src="${esc(p)}" data-i="${i}" alt="${esc(title(t))} photo ${i + 1}">`).join("")}</div>
+      <dl class="kv" style="margin-top:16px"><dt>Engine</dt><dd>${esc(t.engine || "—")}</dd><dt>Transmission</dt><dd>${esc(t.trans || "—")}</dd></dl>
+      ${site.contact_phone ? `<a class="btn primary" href="tel:${esc(site.contact_phone)}">📞 Call about Unit ${esc(t.unit)}</a>` : ""}`;
+    lb.photos = t.photos || [];
+  } else {
+    v.innerHTML = `<h1 style="margin-bottom:14px">Available trucks <span class="faint mono">${trucks.length}</span></h1><div class="dv-grid">
+      ${trucks.map(t => `<a class="dv-truck" href="#${encodeURIComponent(t.unit)}" style="text-decoration:none;color:inherit">${(t.photos || [])[0] ? `<img src="${esc(t.photos[0])}" loading="lazy" alt="">` : `<div class="noimg">Photo coming soon</div>`}
+        <div class="b"><b>${esc(title(t))}</b><div class="muted sm">Unit ${esc(t.unit)} · ${fmt(t.miles)} mi</div><div class="good" style="font-weight:600;margin-top:4px">$${fmt(t.weekly || 1000)}/wk${months(t) ? " · " + months(t) + " mo" : ""}</div></div></a>`).join("") || `<div class="empty">No trucks available right now — check back soon.</div>`}</div>`;
+  }
+  scrollTo(0, 0);
+}
+document.addEventListener("click", e => {
+  const img = e.target.closest(".photos img");
+  if (img) { lb.i = +img.dataset.i; $("#lightbox").classList.add("on"); show(); return; }
+  const b = e.target.closest("[data-lb]");
+  if (b) { if (b.dataset.lb === "close") return $("#lightbox").classList.remove("on"); lb.i = (lb.i + +b.dataset.lb + lb.photos.length) % lb.photos.length; show(); }
+});
+function show() { $("#lbImg").src = lb.photos[lb.i]; $("#lbCaption").textContent = `${lb.i + 1}/${lb.photos.length}`; }
+addEventListener("hashchange", route);
+load().catch(e => { $("#view").innerHTML = `<div class="empty">Couldn't load trucks. Please try again later.</div>`; console.error(e); });
+</script>
+</body>
+</html>

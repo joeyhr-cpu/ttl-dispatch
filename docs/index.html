@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>TTL Dispatch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Sign-in: Firebase Auth. No CRM data is in this page; it loads from Firestore only after login. -->
+<div class="login" id="login">
+  <form class="login-card" id="loginForm">
+    <div class="brand-mark big" id="loginMark">TTL</div>
+    <h2 id="loginTitle">Sign in</h2>
+    <p class="muted">Use the account Joey created for you.</p>
+    <label class="flabel" for="loginEmail">Email</label>
+    <input type="email" id="loginEmail" autocomplete="username" placeholder="you@company.com">
+    <label class="flabel" for="loginPw">Password</label>
+    <input type="password" id="loginPw" autocomplete="current-password" placeholder="Your password">
+    <button class="btn primary wide" type="submit">Sign in</button>
+    <button class="btn ghost wide" type="button" id="loginForgot">Forgot password?</button>
+    <button class="btn ghost wide sm" type="button" id="loginOwner" hidden>First time? Set up the owner account</button>
+    <div class="login-err" id="loginErr"></div>
+  </form>
+</div>
+
+<div class="app" id="app" hidden>
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark" id="brandMark">TTL</div>
+      <div>
+        <div class="brand-name"><span id="brandName">Dispatch</span> <span class="ver">v1</span></div>
+        <div class="brand-sub">Truck Sales</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="#" data-page="dashboard" class="active"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>Dashboard</a>
+      <a href="#" data-page="inventory"><svg class="ic" viewBox="0 0 24 24"><path d="M10 17h4V5H2v12h2"/><path d="M20 17h2v-3.34a4 4 0 0 0-1.17-2.83L19 9h-5v8h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>Trucks<span class="badge" id="navInv">—</span></a>
+      <a href="#" data-page="pipeline"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h16"/></svg>Deals<span class="badge" id="navPipe">—</span></a>
+      <a href="#" data-page="sold"><svg class="ic" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Sold Trucks<span class="badge" id="navSold">—</span></a>
+      <a href="#" data-page="followups"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Follow-ups<span class="badge" id="navFu">—</span></a>
+      <a href="#" data-page="drivers"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>Drivers<span class="badge" id="navDrv">—</span></a>
+      <a href="#" data-page="kpi"><svg class="ic" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>KPI</a>
+      <a href="#" data-page="settings" class="nav-settings"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Settings</a>
+    </nav>
+    <div class="rail-foot" id="railFoot" title="Switch user">
+      <div class="avatar" id="railAvatar">—</div>
+      <div class="who"><div id="railName">—</div><small id="railRole">—</small></div>
+      <button class="themetog" id="themeTog" title="Toggle theme" aria-label="Toggle theme"><svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="freshbar" id="freshBar"></div>
+
+    <!-- DASHBOARD -->
+    <section class="page on" id="page-dashboard">
+      <div class="topbar">
+        <div>
+          <div class="crumbs">Overview</div>
+          <h1 id="dashGreet">Good morning</h1>
+          <div class="shortcuts">Shortcuts: <kbd>D</kbd> Dashboard · <kbd>T</kbd> Trucks · <kbd>P</kbd> Deals · <kbd>N</kbd> New deal · <kbd>/</kbd> Search</div>
+        </div>
+        <div class="searchwrap">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+          <input placeholder="Search drivers, units, phones…" id="globalSearch" autocomplete="off">
+          <div id="gsResults" class="gs-results" hidden></div>
+        </div>
+        <button class="btn primary" data-act="newDeal">+ Assign truck</button>
+      </div>
+
+      <div class="kpigrid g3">
+        <div class="kpi hilite clickable" data-go="followups"><div class="label">Due today</div><div class="val num" id="kpiDue">—</div><div class="delta">Follow-ups to close →</div></div>
+        <div class="kpi clickable" data-go="pipeline"><div class="label">Open deals</div><div class="val num" id="kpiPipe">—</div><div class="delta" id="kpiPipeSub">—</div></div>
+        <div class="kpi clickable" data-go="inventory"><div class="label">Trucks for sale</div><div class="val num" id="kpiAvail">—</div><div class="delta" id="kpiAvailSub">—</div></div>
+      </div>
+      <div class="kpigrid g4">
+        <div class="kpi clickable accentb" data-go="sold"><div class="label acc">Sold trucks</div><div class="val num" id="kpiSold">—</div><div class="delta" id="kpiSoldSub">—</div></div>
+        <div class="kpi clickable admin-only" data-go="sold"><div class="label">Collected to date</div><div class="val num good" id="kpiCollected">—</div><div class="delta" id="kpiCollectedSub">—</div></div>
+        <div class="kpi clickable admin-only" data-go="sold"><div class="label">Remaining to collect</div><div class="val num" id="kpiRemaining">—</div><div class="delta" id="kpiRemainingSub">—</div></div>
+        <div class="kpi clickable admin-only" data-go="sold"><div class="label">Monthly run-rate</div><div class="val num" id="kpiMonthly">—</div><div class="delta">Expected /month at full collection →</div></div>
+      </div>
+
+      <div class="pipestrip" id="pipeStrip"></div>
+
+      <div class="card ai-card">
+        <div class="card-head">
+          <h3>✦ Insights <span class="muted sm" id="aiCount"></span></h3>
+          <div class="btnrow">
+            <button class="btn ghost sm" data-act="readAloud">🔊 Read</button>
+            <button class="btn ghost sm" data-act="batchSms">📢 Batch SMS</button>
+            <button class="btn ghost sm" data-act="wallboard">📺 Wallboard</button>
+            <button class="btn ghost sm" data-act="weeklyReport">📄 Weekly report</button>
+            <button class="btn ghost sm" data-act="theme">🌗</button>
+            <button class="btn ghost sm" data-act="reload" title="Reload latest data">↻</button>
+          </div>
+        </div>
+        <div id="aiList" class="ai-list"></div>
+      </div>
+
+      <div class="dash2">
+        <div class="card"><div class="card-head"><h3>This week</h3></div><div id="weekSnap" class="pad"></div></div>
+        <div class="card"><div class="card-head"><h3>Recent activity</h3></div><div id="activityFeed" class="feed"></div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Due today &amp; overdue</h3><button class="btn ghost sm" data-go="followups">All follow-ups →</button></div>
+        <div class="folist" id="dueList"></div>
+      </div>
+    </section>
+
+    <!-- TRUCKS -->
+    <section class="page" id="page-inventory">
+      <div class="topbar">
+        <div><div class="crumbs">Fleet</div><h1>Trucks</h1></div>
+        <div class="searchwrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg><input placeholder="Unit, VIN, mileage…" id="invSearch"></div>
+        <button class="btn" data-act="shareCatalog">Driver ads page</button>
+        <button class="btn ghost" data-act="exportTrucks">📥 Export</button>
+        <button class="btn" data-act="newTruck">+ Add truck</button>
+      </div>
+      <div class="filterbar">
+        <button class="chip on" data-term="all">All terms <span class="n" id="cAll"></span></button>
+        <button class="chip" data-term="short">≤12 mo <span class="n" id="cShort"></span></button>
+        <button class="chip" data-term="mid">13-16 mo <span class="n" id="cMid"></span></button>
+        <button class="chip" data-term="long">17-22 mo <span class="n" id="cLong"></span></button>
+        <button class="chip" data-term="ext">23+ mo <span class="n" id="cExt"></span></button>
+        <div class="filtergap"></div>
+        <button class="chip on" data-avail="all">All status</button>
+        <button class="chip" data-avail="available">For sale</button>
+        <button class="chip" data-avail="inpipe">In pipeline</button>
+        <button class="chip" data-avail="sold">Sold</button>
+      </div>
+      <div class="tablewrap"><div class="tscroll">
+        <table class="inv">
+          <thead><tr>
+            <th class="sortable" data-sort="unit">Unit</th><th>Salesman</th><th class="sortable" data-sort="year">Year</th>
+            <th class="num sortable" data-sort="miles">Miles</th><th class="sortable" data-sort="term">Term</th>
+            <th class="num sortable" data-sort="total">Total</th><th>Status / Driver</th><th></th>
+          </tr></thead>
+          <tbody id="invTbody"></tbody>
+        </table>
+      </div></div>
+    </section>
+
+    <!-- DEALS -->
+    <section class="page" id="page-pipeline">
+      <div class="topbar">
+        <div><div class="crumbs">Sales</div><h1>Deal pipeline</h1></div>
+        <div class="searchwrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg><input placeholder="Search deals…" id="pipeSearch"></div>
+        <div class="togrow" id="pipeMine"><button class="on" data-mine="all">All deals</button><button data-mine="mine">My deals</button></div>
+        <button class="btn ghost" data-act="exportDeals">📥 Export</button>
+        <button class="btn primary" data-act="newDeal">+ Assign truck</button>
+      </div>
+      <div class="kanban" id="kanban"></div>
+    </section>
+
+    <!-- SOLD -->
+    <section class="page" id="page-sold">
+      <div class="topbar">
+        <div><div class="crumbs">Portfolio</div><h1>Sold trucks</h1></div>
+        <div class="searchwrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg><input placeholder="Search unit, driver…" id="soldSearch"></div>
+        <button class="btn ghost" data-act="exportSold">📥 Export CSV</button>
+        <button class="btn" data-act="newSold">+ Add sold truck</button>
+      </div>
+      <div id="soldSummary"></div>
+      <div class="filterbar" id="soldFilters"></div>
+      <div id="soldList"></div>
+    </section>
+
+    <!-- FOLLOW-UPS -->
+    <section class="page" id="page-followups">
+      <div class="topbar">
+        <div><div class="crumbs">Tasks</div><h1>Follow-ups</h1></div>
+        <button class="btn ghost" data-act="exportFollowups">📥 Export</button>
+        <button class="btn" data-go="pipeline">Pipeline →</button>
+      </div>
+      <div class="fugroups" id="fuGroups"></div>
+    </section>
+
+    <!-- DRIVERS -->
+    <section class="page" id="page-drivers">
+      <div class="topbar">
+        <div><div class="crumbs">Team</div><h1>Drivers</h1></div>
+        <div class="searchwrap"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg><input placeholder="Search drivers…" id="drvSearch"></div>
+        <button class="btn ghost" data-act="exportDrivers">📥 Export</button>
+        <button class="btn primary" data-act="newDriver">+ Add driver</button>
+      </div>
+      <p class="lede">Drivers eligible for lease-to-purchase. Click a driver to view their deal or ask Claude to assign a truck.</p>
+      <div class="filterbar" id="drvFleetChips"></div>
+      <div class="filterbar between">
+        <div class="chiprow" id="drvContactChips"></div>
+        <div class="togrow" id="drvView"><button data-view="cards">📇 Cards</button><button data-view="table" class="on">📊 Table</button></div>
+      </div>
+      <div class="drivergrid" id="driverGrid" hidden></div>
+      <div id="driverTable"></div>
+    </section>
+
+    <!-- KPI -->
+    <section class="page" id="page-kpi">
+      <div class="topbar">
+        <div><div class="crumbs">Performance</div><h1>KPI &amp; commissions</h1></div>
+        <div class="togrow" id="kpiPeriod"><button class="on" data-period="month">This month</button><button data-period="year">This year</button><button data-period="all">All time</button></div>
+      </div>
+      <p class="lede">Sales agents earn commission when a deal reaches Active with agreement signed, escrow received, and down payment complete. Only eligible deals count.</p>
+      <div id="kpiContent"></div>
+    </section>
+
+    <!-- SETTINGS: FEES -->
+    <section class="page" id="page-fees">
+      <div class="topbar"><div><div class="crumbs">Settings</div><h1>Fees &amp; terms</h1></div><button class="btn primary admin-only" data-act="saveFees">Save changes</button></div>
+      <div class="subnav" data-sub="fees"></div>
+      <p class="lede">Baseline fee schedule the calculator applies to every deal. Edit and save — the change applies for everyone.</p>
+      <div class="fees" id="feesGrid"></div>
+    </section>
+
+    <!-- SETTINGS: CALCULATOR -->
+    <section class="page" id="page-calculator">
+      <div class="topbar"><div><div class="crumbs">Settings</div><h1>Deal calculator</h1></div></div>
+      <div class="subnav" data-sub="calculator"></div>
+      <p class="lede">Model a driver's weekly take-home under any of the three payment structures — with fees, escrow, and truck payment all applied.</p>
+      <div class="calcgrid">
+        <form class="card pad calcform" id="calcForm" onsubmit="return false">
+          <div class="field"><label>Truck</label><select id="cTruck"></select><div class="hint" id="cTruckHint"></div></div>
+          <div class="field"><label>Estimated weekly gross</label><input class="mono" id="cGross" value="12000" inputmode="numeric"><div class="hint">Loaded miles × rate.</div></div>
+          <div class="field"><label>Down payment plan</label>
+            <div class="pplan" id="cPlan">
+              <div class="opt on" data-plan="standard"><div class="oname">$5,000 upfront · $1,000/wk</div><div class="odesc">Standard plan. Down paid before dispatch.</div></div>
+              <div class="opt" data-plan="split"><div class="oname">$5,000 split · 5 weeks · $1,000/wk</div><div class="odesc">$1,000/wk from settlement for 5 weeks + regular truck payment.</div></div>
+              <div class="opt" data-plan="warranty"><div class="oname">$8,000 down · $1,100/wk · With warranty</div><div class="odesc">Warranty covers major issues.</div></div>
+            </div>
+          </div>
+          <div class="field"><label>Loaded miles this week</label><input class="mono" id="cMiles" value="4500" inputmode="numeric"></div>
+        </form>
+        <div class="calcresult" id="calcOut"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS: USERS -->
+    <section class="page" id="page-users">
+      <div class="topbar"><div><div class="crumbs">Settings · Admin</div><h1>Users</h1></div><button class="btn primary admin-only" data-act="newUser">✉ Invite user</button></div>
+      <div class="subnav" data-sub="users"></div>
+      <p class="lede">Manage who can log in, their role, and whether they earn commission on deals they close. Disabled users lose access immediately.</p>
+      <div id="usersList"></div>
+    </section>
+  </main>
+</div>
+
+<!-- Deal side sheet -->
+<div class="sheet-overlay" id="sheetOverlay"></div>
+<aside class="sheet" id="sheet" role="dialog" aria-label="Deal detail">
+  <div class="sheet-head">
+    <div class="avatar" id="sAvatar">--</div>
+    <div class="who"><h2 id="sName">—</h2><div class="meta" id="sMeta">—</div></div>
+    <button class="sheet-close" id="sheetClose" aria-label="Close">✕</button>
+  </div>
+  <div class="sheet-tabs" id="sheetTabs">
+    <button class="on" data-tab="overview">Overview</button><button data-tab="payments">Payments</button><button data-tab="received">Received</button><button data-tab="activity">Activity</button>
+  </div>
+  <div class="sheet-body" id="sheetBody"></div>
+</aside>
+
+<div class="modal-overlay" id="modalOverlay"><div class="modal" id="modal"></div></div>
+
+<button class="mobile-menu-btn" id="mobileMenu" aria-label="Menu">☰</button>
+
+<div class="lightbox" id="lightbox"><button class="lb-close" data-lb="close">×</button><button class="lb-nav lb-prev" data-lb="-1">‹</button><img id="lbImg" alt=""><button class="lb-nav lb-next" data-lb="1">›</button><div class="lb-caption" id="lbCaption"></div></div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
