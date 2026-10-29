@@ -1151,7 +1151,7 @@ function startApp() {
       await store.auth.signOut();
       $("#loginErr").textContent = "Account created. Open the verification email, click the link, then sign in here.";
     } catch (x) {
-      $("#loginErr").textContent = x.code === "auth/email-already-in-use" ? "Owner account already exists — just sign in (or use Forgot password)." : x.message;
+      $("#loginErr").textContent = x.code === "auth/email-already-in-use" ? "Your account is already created. Click Sign in: if the email is not verified yet, we resend the verification link (check Spam too)." : x.message;
     }
   });
   let started = false;
