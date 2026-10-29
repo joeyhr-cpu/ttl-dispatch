@@ -56,7 +56,16 @@ It runs `dispatch.py check --telegram`. The result goes to Joey's Telegram Saved
 
 ## Claude's tool: `tools/dispatch.py`
 
-Run it with `C:\Users\Joey\claude\tools\.venv\Scripts\python.exe`. The key is `C:\Users\Joey\claude\tools\dispatch-firebase-key.json`; it is secret and never committed. In PowerShell, pass JSON with `--file` or pipe it in with `--file -`.
+Run it with `C:\Users\Joey\claude\tools\.venv\Scripts\python.exe`.
+
+**Access is keyless:** the taylorfreight.com org blocks service-account keys.
+- `dispatch.py login` uses the internal OAuth client "TTL Dispatch tool" (`tools\dispatch-oauth-client.json`).
+- Joey clicks Allow once, and the token is saved in `tools\dispatch-oauth-token.json`.
+- The token's scopes are Firestore, Firebase config/rules and Identity Toolkit, nothing else.
+- Both files are secret and never committed.
+- If a run says "not logged in" or `invalid_grant`, run `login` again.
+
+In PowerShell, pass JSON with `--file` or pipe it in with `--file -`.
 
 ```
 dispatch.py list trucks|drivers|deals|users|activity|fees [--filter fleet=TTL] [--full]
@@ -77,7 +86,9 @@ Use `DISPATCH_DATA_DIR=<folder>` to run the tool against local JSON files for te
 
 **Code changes:** run `tools\publish.ps1 -Message "..."`. It refuses to publish if demo data or a key file is staged.
 
-**Firestore rules:** they are in `firestore.rules`. Paste them in Firebase console → Firestore → Rules → Publish.
+**Firestore rules and web config:** run `tools\setup_firebase.py`. It deploys `firestore.rules`, rewrites `docs/config.js` and checks the authorized domain. It is safe to re-run.
+
+**First admin:** Joey opens the app, types `joey@taylorfreight.com` and a password of his own, and clicks "First time? Set up the owner account". He then verifies the email and signs in. The rules let only that verified email create the first admin profile.
 
 ## Data model
 
