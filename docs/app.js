@@ -29,10 +29,10 @@ const stageMeta = {
 };
 const STAGES = Object.keys(stageMeta);
 const FLEETS = ["TTL", "DT", "VKL", "G7"];
-const SOLD_STATUSES = ["Active", "Accident", "Returned", "Paid off"];
+const SOLD_STATUSES = ["Active", "Reserved", "Accident", "Returned", "Paid off"];
 const COLLS = ["trucks", "drivers", "deals", "users"];
 // fields copied to the public driver ads page — nothing about drivers, deals, cost or salesmen
-const PUBLIC_TRUCK_FIELDS = ["unit", "year", "make", "model", "miles", "weekly", "term_weeks", "apu", "warranty", "engine", "trans", "photos"];
+const PUBLIC_TRUCK_FIELDS = ["unit", "year", "make", "model", "miles", "weekly", "term_weeks", "price_total", "apu", "warranty", "engine", "trans", "photos", "gallery_url"];
 
 let S = {trucks: [], drivers: [], deals: [], users: [], activity: [], fees: {}, meta: {}};
 let me = null;
@@ -140,7 +140,8 @@ function soldCalc(d) {
   const payments = s.payments || [];
   const paidLogged = payments.reduce((a, p) => a + (+p.amount || 0), 0);
   // weeks_paid is the running count (imports start with it); payments[] is the itemised log
-  const paidWeekly = Math.max(paidLogged, weekly * (+s.weeks_paid || 0));
+  // paid_to_date comes from Joey's sold sheet ("Total Payments")
+  const paidWeekly = Math.max(paidLogged, weekly * (+s.weeks_paid || 0), +s.paid_to_date || 0);
   const totalDue = +s.loan || weekly * termW;
   const remaining = Math.max(0, totalDue - paidWeekly);
   const collected = (+s.down || 0) + paidWeekly;
@@ -151,7 +152,7 @@ function soldCalc(d) {
 }
 function soldTotals() {
   const all = soldDeals().map(d => ({d, c: soldCalc(d)}));
-  const active = all.filter(x => x.c.status === "Active");
+  const active = all.filter(x => x.c.status === "Active" || x.c.status === "Reserved");
   return {count: all.length, active: active.length,
     collected: all.reduce((a, x) => a + x.c.collected, 0), remaining: active.reduce((a, x) => a + x.c.remaining, 0),
     monthly: active.reduce((a, x) => a + x.c.monthly, 0), all, activeList: active};
@@ -344,7 +345,8 @@ function openTruck(u) {
     ["Engine", esc(t.engine || "—")], ["Transmission", esc(t.trans || "—")],
     ["APU / warranty", (t.apu ? "APU" : "No APU") + " · " + (t.warranty ? "Warranty" : "No warranty")], ["Term", termMonths(t) ? `${termMonths(t)} mo (${t.term_weeks || "?"} wks)` : "—"],
     ["Weekly", fmtC(t.weekly)], ["Total price", fmtC(t.price_total)], ...(isAdmin() && t.cost ? [["Cost", fmtC(t.cost)], ["Markup", fmtC(t.price_total - t.cost)]] : []),
-    ["Salesman", esc(userBy(t.salesman)?.name || "—")], ["Location", esc(t.location || "—")], ["Notes", esc(t.notes || "—")]];
+    ["Salesman", esc(userBy(t.salesman)?.name || "—")], ["Location", esc(t.location || "—")], ["Notes", esc(t.notes || "—")],
+    ...(t.gallery_url ? [["All photos", `<a href="${esc(t.gallery_url)}" target="_blank" rel="noopener">Truck gallery (${esc(t.photos_count || (t.photos || []).length)}) ↗</a>`]] : [])];
   modal(`Unit ${esc(t.unit)}`, `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
     ${(t.photos || []).length ? `<div class="secttl">Photos</div><div class="photos">${t.photos.map((p, i) => `<img src="${esc(p)}" loading="lazy" data-lbunit="${esc(t.unit)}" data-lbi="${i}" alt="Unit ${esc(t.unit)} photo ${i + 1}">`).join("")}</div>` : ""}`,
     `${st.deal ? `<button class="btn" data-deal="${esc(st.deal.id)}">Open deal</button>` : `<button class="btn" data-act="newDeal" data-unit="${esc(t.unit)}">Assign truck</button>`}
@@ -454,7 +456,7 @@ function renderSheet() {
   } else if (curTab === "received") {
     if (!isSold(d)) { body.innerHTML = `<div class="faint">Weekly payments are tracked once the truck is sold. Use “Mark as sold” on the Overview tab.</div>`; return; }
     const c = soldCalc(d), s = d.sold;
-    body.innerHTML = `<dl class="kv"><dt>Sold date</dt><dd>${esc(s.date || "—")}</dd><dt>Status</dt><dd>${esc(c.status)}</dd>
+    body.innerHTML = `<dl class="kv"><dt>Sold date</dt><dd>${esc(s.date || "—")}</dd><dt>Status</dt><dd>${esc(c.status)}</dd><dt>Seller</dt><dd>${esc(d.seller || userBy(d.agent_id)?.name || "—")}</dd>${s.price ? `<dt>Sale price</dt><dd>${fmtC(s.price)}</dd>` : ""}
       ${isAdmin() ? `<dt>Acquisition cost</dt><dd>${fmtC(s.acq_cost)}</dd>` : ""}<dt>Loan amount</dt><dd>${fmtC(s.loan)}</dd><dt>Down payment</dt><dd>${fmtC(s.down)}</dd>
       <dt>Weekly</dt><dd>${fmtC(c.weekly)} · ${esc(s.term_months || "?")} mo</dd><dt>Weeks paid</dt><dd>${c.weeksPaid} of ${c.termW || "?"}</dd>
       <dt>Collected</dt><dd>${fmtC(c.collected)}</dd><dt>Remaining</dt><dd>${fmtC(c.remaining)}</dd></dl>
@@ -486,7 +488,7 @@ function renderSold() {
   $("#soldList").innerHTML = `<div class="tablewrap"><div class="tscroll"><table><thead><tr><th>Unit</th><th>Driver</th><th>Sold</th><th>Status</th>
     <th class="num">Weekly</th><th>Paid</th><th class="num">Collected</th><th class="num">Remaining</th><th>Last payment</th></tr></thead><tbody>
     ${list.map(({d, c}) => `<tr data-deal="${esc(d.id)}"><td class="u">${esc(d.unit)}</td><td>${esc(driverBy(d.driver_id)?.name || d.driver_id)}</td><td>${esc(d.sold.date || "—")}</td>
-      <td><span class="pill ${c.status === "Active" ? "available" : c.status === "Paid off" ? "sold" : "red"}">${esc(c.status)}</span></td>
+      <td><span class="pill ${c.status === "Active" ? "available" : c.status === "Paid off" ? "sold" : c.status === "Reserved" ? "hold" : "red"}">${esc(c.status)}</span></td>
       <td class="num">${fmtC(c.weekly)}</td><td><div class="progress" title="${c.weeksPaid}/${c.termW} weeks"><i style="width:${(c.pct * 100).toFixed(0)}%"></i></div><span class="faint sm">${c.weeksPaid}/${c.termW || "?"} wks</span></td>
       <td class="num">${fmtC(c.collected)}</td><td class="num">${fmtC(c.remaining)}</td><td class="${c.lastPay && daysSince(c.lastPay) > 14 ? "bad" : ""}">${esc(c.lastPay || "—")}</td></tr>`).join("")
       || `<tr><td colspan="9" class="empty">No sold trucks yet — click "+ Add sold truck" or send Claude the list.</td></tr>`}

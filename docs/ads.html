@@ -69,6 +69,7 @@ function route() {
         <div class="kpi"><div class="label">Miles</div><div class="val num">${fmt(t.miles)}</div><div class="delta">${esc(t.engine || "")}</div></div></div>
       <div class="photos">${(t.photos || []).map((p, i) => `<img src="${esc(p)}" data-i="${i}" alt="${esc(title(t))} photo ${i + 1}">`).join("")}</div>
       <dl class="kv" style="margin-top:16px"><dt>Engine</dt><dd>${esc(t.engine || "—")}</dd><dt>Transmission</dt><dd>${esc(t.trans || "—")}</dd></dl>
+      ${t.gallery_url ? `<p><a class="btn" href="${esc(t.gallery_url)}" target="_blank" rel="noopener">📷 See all photos</a></p>` : ""}
       ${site.contact_phone ? `<a class="btn primary" href="tel:${esc(site.contact_phone)}">📞 Call about Unit ${esc(t.unit)}</a>` : ""}`;
     lb.photos = t.photos || [];
   } else {

@@ -37,6 +37,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -56,10 +57,10 @@ SITE_URL = "https://joeyhr-cpu.github.io/ttl-dispatch/"
 COLLECTIONS = {"trucks": "unit", "drivers": "id", "deals": "id", "users": "id"}
 PREFIX = {"drivers": ("D-", 101), "deals": ("S-", 1001)}
 STAGES = ["working", "assigned", "agreement", "downpayment", "ready", "active"]
-SOLD_STATUSES = ["Active", "Accident", "Returned", "Paid off"]
+SOLD_STATUSES = ["Active", "Reserved", "Accident", "Returned", "Paid off"]
 FLEETS = ["TTL", "DT", "VKL", "G7"]
 PLANS = ["standard", "split", "warranty"]
-PUBLIC_TRUCK_FIELDS = ["unit", "year", "make", "model", "miles", "weekly", "term_weeks", "apu", "warranty", "engine", "trans", "photos"]
+PUBLIC_TRUCK_FIELDS = ["unit", "year", "make", "model", "miles", "weekly", "term_weeks", "price_total", "apu", "warranty", "engine", "trans", "photos", "gallery_url"]
 DEFAULT_FEES = {"dispatch": 15, "mile": 0.09, "admin": 300, "trailer": 250, "ins": 500, "oci": 50, "esc": 2500, "payout": 85, "commission": 1000, "contact_phone": ""}
 CHECK_STALE_DAYS = 2
 
@@ -449,7 +450,7 @@ def datatruck_odometers():
     while True:
         r = c.call("GET", "/v2/truck/truck/", page=page, page_size=200)
         for t in r["results"]:
-            u = str(t.get("unit_number") or "").strip().rstrip(".")
+            u = str(t.get("unit_number") or "").strip().rstrip(".").lstrip("0")
             if u and t.get("odometer") is not None:
                 out.setdefault(u, (t["odometer"], t.get("status")))
         if not r.get("next"):
@@ -462,7 +463,7 @@ def sync_miles(dry=False):
     odo = datatruck_odometers()
     changed, missing = [], []
     for t in s.all("trucks"):
-        u = str(t["unit"])
+        u = str(t["unit"]).lstrip("0")
         if u not in odo:
             missing.append(u)
             continue
@@ -489,6 +490,65 @@ def cmd_miles(a):
 
 def cmd_publish(a):
     publish()
+
+
+# ---------------------------------------------------------------- photos (truck gallery site)
+GALLERY = "https://truck-gallery-a56f2b.netlify.app"
+MAX_PHOTOS = 12
+
+
+def _get_json(url):
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ttl-dispatch"}), timeout=60) as r:
+        return json.loads(r.read())
+
+
+def gallery_index():
+    """{unit (no leading zeros): gallery truck}, plus {vin: truck}."""
+    by_unit, by_vin = {}, {}
+    for t in _get_json(f"{GALLERY}/api/trucks"):
+        if t.get("unit"):
+            by_unit[str(t["unit"]).lstrip("0") or "0"] = t
+        if t.get("vin"):
+            by_vin[t["vin"].upper()] = t
+    return by_unit, by_vin
+
+
+def gallery_photos(key):
+    d = _get_json(f"{GALLERY}/api/trucks/{urllib.parse.quote(key, safe='')}")
+    photos = sorted(d.get("photos", []), key=lambda p: p.get("takenAt") or "")
+    return [f"{GALLERY}/api/img/{p['id']}" for p in photos[:MAX_PHOTOS]], f"{GALLERY}/t/{urllib.parse.quote(key, safe='')}"
+
+
+def gallery_match(t, by_unit, by_vin):
+    vin = str(t.get("vin") or "").upper()
+    return by_vin.get(vin) if vin in by_vin else by_unit.get(str(t.get("unit")).lstrip("0"))
+
+
+def sync_photos(dry=False):
+    """Fill photos + gallery_url for trucks the gallery knows (by VIN, else unit). Returns units updated."""
+    s = store()
+    by_unit, by_vin = gallery_index()
+    changed = []
+    for t in s.all("trucks"):
+        g = gallery_match(t, by_unit, by_vin)
+        if not g:
+            continue
+        if t.get("photos_count") == g.get("count") and t.get("gallery_url"):
+            continue
+        urls, link = gallery_photos(g["key"])
+        changed.append(str(t["unit"]))
+        if not dry:
+            s.put("trucks", t["unit"], {"photos": urls, "gallery_url": link, "photos_count": g.get("count")})
+    if changed and not dry:
+        s.log(f"updated photos from the truck gallery for {len(changed)} truck(s)")
+    return changed
+
+
+def cmd_photos(a):
+    ch = sync_photos(a.dry_run)
+    print(f"{len(ch)} truck(s) {'would get' if a.dry_run else 'got'} photos: {', '.join(ch) or 'none'}")
+    if ch and not a.dry_run:
+        publish(quiet=True)
 
 
 # ---------------------------------------------------------------- validation
@@ -606,6 +666,12 @@ def cmd_check(a):
     except Exception as e:
         lines.append(f"FAIL mileage sync: {e}")
         bad = True
+    # 2b. photos from the truck gallery
+    try:
+        ch = sync_photos()
+        lines.append(f"OK photos synced from the truck gallery: {len(ch)} truck(s) updated")
+    except Exception as e:
+        lines.append(f"WARN photo sync: {e}")
     # 3. public ads in step with inventory
     n = publish(quiet=True)
     lines.append(f"OK ads page shows {n} for-sale truck(s)")
@@ -704,6 +770,7 @@ def main():
     s = sp.add_parser("user"); s.add_argument("email"); s.add_argument("--name"); s.add_argument("--role", choices=["admin", "sales"]); s.add_argument("--sales", choices=["yes", "no"]); s.add_argument("--disable", action="store_true"); s.set_defaults(f=cmd_user)
     s = sp.add_parser("miles"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(f=cmd_miles)
     s = sp.add_parser("publish"); s.set_defaults(f=cmd_publish)
+    s = sp.add_parser("photos"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(f=cmd_photos)
     s = sp.add_parser("validate"); s.set_defaults(f=cmd_validate)
     s = sp.add_parser("backup"); s.set_defaults(f=cmd_backup)
     s = sp.add_parser("restore"); s.add_argument("file"); s.add_argument("--yes", action="store_true"); s.set_defaults(f=cmd_restore)
