@@ -56,11 +56,11 @@ SITE_URL = "https://joeyhr-cpu.github.io/ttl-dispatch/"
 
 COLLECTIONS = {"trucks": "unit", "drivers": "id", "deals": "id", "users": "id"}
 PREFIX = {"drivers": ("D-", 101), "deals": ("S-", 1001)}
-STAGES = ["working", "assigned", "agreement", "downpayment", "ready", "active"]
-SOLD_STATUSES = ["Active", "Reserved", "Accident", "Returned", "Paid off"]
+STAGES = ["working", "assigned", "agreement", "downpayment", "ready", "reserved", "active"]
+SOLD_STATUSES = ["Active", "Accident", "Returned", "Paid off"]
 FLEETS = ["TTL", "DT", "VKL", "G7"]
 PLANS = ["standard", "split", "warranty"]
-PUBLIC_TRUCK_FIELDS = ["unit", "year", "make", "model", "miles", "weekly", "term_weeks", "price_total", "apu", "warranty", "engine", "trans", "photos", "gallery_url"]
+PUBLIC_TRUCK_FIELDS = ["unit", "year", "make", "model", "miles", "weekly", "term_weeks", "price_total", "apu", "warranty", "engine", "trans", "photos", "gallery_url", "thumb"]
 DEFAULT_FEES = {"dispatch": 15, "mile": 0.09, "admin": 300, "trailer": 250, "ins": 500, "oci": 50, "esc": 2500, "payout": 85, "commission": 1000, "contact_phone": ""}
 CHECK_STALE_DAYS = 2
 
@@ -479,6 +479,84 @@ def sync_miles(dry=False):
     return changed, missing
 
 
+# ---------------------------------------------------------------- weekly truck payments (Datatruck statements)
+STATEMENTS_START = "2026-10-29"  # payments before this are in Joey's sold sheet (paid_to_date / weeks_paid)
+
+
+def _dt():
+    sys.path.insert(0, str(TOOLS / "datatruck"))
+    import dt as dtmod
+    return dtmod.Datatruck()
+
+
+def _is_truck_payment(kind):
+    k = str(kind or "").lower().replace("_", " ")
+    return "truck" in k and "payment" in k
+
+
+def statement_payments(days=14):
+    """Posted Datatruck settlements of the last `days` days -> truck-payment deductions per truck unit.
+    Yields (unit, {"id", "date", "amount", "st", "payee"})."""
+    c = _dt()
+    since = (dt.date.today() - dt.timedelta(days=days)).isoformat()
+    rows, page = [], 1
+    while True:
+        r = c.call("GET", "/v1/salary/settlement-list/", page=page, page_size=200, from_date=since, to_date=today())
+        rows += r["results"]
+        if not r.get("next"):
+            break
+        page += 1
+    for st in rows:
+        if st.get("status") != "posted":
+            continue
+        units = [str(t["unit_number"]).lstrip("0") for t in st.get("trucks", [])]
+        lo, hi = st.get("from_date") or st["date"], st["date"]
+        ch = c.call("GET", f"/v1/salary/settlement/charges/{st['id']}/")
+        items = []
+        for group in ("recurrents", "scheduled_payments", "truck_scheduled_payments", "truck_recurrent_payments", "one_time_charges"):
+            for x in (ch.get(group) or {}).get("deduction", []):
+                if _is_truck_payment(x.get("type")) and lo <= str(x.get("date") or "") <= hi:
+                    items.append({"id": f"dt:{group}:{x['id']}", "date": x["date"], "amount": x.get("total_amount") or x.get("amount")})
+        det = c.call("GET", f"/v1/salary/settlement-detail/{st['id']}/")
+        for i, x in enumerate(det.get("deduction_list") or []):
+            if _is_truck_payment(x.get("type")):
+                items.append({"id": f"dt:st{st['id']}:{i}", "date": hi, "amount": x.get("total_amount") or x.get("amount")})
+        for it in items:
+            for u in units:
+                yield u, {**it, "st": st["settlement_number"], "payee": st.get("payee")}
+
+
+def sync_statements(days=14, dry=False):
+    s = store()
+    drivers = s.all("drivers")
+    by_unit = {str(d["unit"]).lstrip("0"): d for d in s.all("deals")
+               if d.get("sold") and (d["sold"].get("status") or "Active") == "Active" and d.get("unit") not in (None, "")}
+    added = []
+    for u, it in statement_payments(days):
+        d = by_unit.get(u)
+        if not d or it["date"] < d["sold"].get("statements_since", STATEMENTS_START):
+            continue
+        pays = d["sold"].setdefault("payments", [])
+        if any(it["id"] in (p.get("note") or "") for p in pays):
+            continue
+        pays.append({"date": it["date"], "amount": it["amount"], "method": "settlement", "note": f"{it['st']} ({it['id']})"})
+        d["sold"]["weeks_paid"] = (d["sold"].get("weeks_paid") or 0) + 1
+        d["sold"]["paid_to_date"] = (d["sold"].get("paid_to_date") or 0) + (it["amount"] or 0)
+        added.append((u, it))
+        if not dry:
+            save_deal(d, f"recorded truck payment ${it['amount']:,.0f} from Datatruck {it['st']} on {deal_label(d, drivers)}")
+    if not dry:
+        s.put("config", "meta", {"statements_synced_at": now_iso()})
+    return added
+
+
+def cmd_statements(a):
+    added = sync_statements(a.days, a.dry_run)
+    for u, it in added:
+        print(f"Unit {u}: ${it['amount']:,.2f} on {it['date']} ({it['st']}, {it['payee']})")
+    print(f"{len(added)} truck payment(s) {'found (dry run)' if a.dry_run else 'recorded'}")
+
+
 def cmd_miles(a):
     changed, missing = sync_miles(a.dry_run)
     for u, old, new in changed:
@@ -533,12 +611,13 @@ def sync_photos(dry=False):
         g = gallery_match(t, by_unit, by_vin)
         if not g:
             continue
-        if t.get("photos_count") == g.get("count") and t.get("gallery_url"):
+        if t.get("photos_count") == g.get("count") and t.get("gallery_url") and t.get("thumb"):
             continue
         urls, link = gallery_photos(g["key"])
         changed.append(str(t["unit"]))
         if not dry:
-            s.put("trucks", t["unit"], {"photos": urls, "gallery_url": link, "photos_count": g.get("count")})
+            thumb = f"{GALLERY}/api/img/{g['coverThumbId']}" if g.get("coverThumbId") else None
+            s.put("trucks", t["unit"], {"photos": urls, "gallery_url": link, "photos_count": g.get("count"), "thumb": thumb})
     if changed and not dry:
         s.log(f"updated photos from the truck gallery for {len(changed)} truck(s)")
     return changed
@@ -568,7 +647,7 @@ def validate(quiet=False):
     for x in drivers:
         if x.get("fleet") and x["fleet"] not in FLEETS:
             p.append(f"{x['id']}: fleet '{x['fleet']}' not in {FLEETS}")
-    names = [str(x.get("name", "")).strip().lower() for x in drivers]
+    names = [str(x.get("name", "")).strip().lower() for x in drivers if not x.get("dup_ok")]
     p += [f"possible duplicate driver '{n}'" for n in sorted({n for n in names if n and names.count(n) > 1})]
     for d in deals:
         tag = d.get("id")
@@ -769,6 +848,7 @@ def main():
     s = sp.add_parser("stage"); s.add_argument("deal"); s.add_argument("stage"); s.set_defaults(f=cmd_stage)
     s = sp.add_parser("user"); s.add_argument("email"); s.add_argument("--name"); s.add_argument("--role", choices=["admin", "sales"]); s.add_argument("--sales", choices=["yes", "no"]); s.add_argument("--disable", action="store_true"); s.set_defaults(f=cmd_user)
     s = sp.add_parser("miles"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(f=cmd_miles)
+    s = sp.add_parser("statements", help="weekly truck payments from Datatruck statements"); s.add_argument("--days", type=int, default=14); s.add_argument("--dry-run", action="store_true"); s.set_defaults(f=cmd_statements)
     s = sp.add_parser("publish"); s.set_defaults(f=cmd_publish)
     s = sp.add_parser("photos"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(f=cmd_photos)
     s = sp.add_parser("validate"); s.set_defaults(f=cmd_validate)

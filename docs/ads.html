@@ -74,7 +74,7 @@ function route() {
     lb.photos = t.photos || [];
   } else {
     v.innerHTML = `<h1 style="margin-bottom:14px">Available trucks <span class="faint mono">${trucks.length}</span></h1><div class="dv-grid">
-      ${trucks.map(t => `<a class="dv-truck" href="#${encodeURIComponent(t.unit)}" style="text-decoration:none;color:inherit">${(t.photos || [])[0] ? `<img src="${esc(t.photos[0])}" loading="lazy" alt="">` : `<div class="noimg">Photo coming soon</div>`}
+      ${trucks.map(t => `<a class="dv-truck" href="#${encodeURIComponent(t.unit)}" style="text-decoration:none;color:inherit">${(t.thumb || (t.photos || [])[0]) ? `<img src="${esc(t.thumb || t.photos[0])}" loading="lazy" alt="">` : `<div class="noimg">Photo coming soon</div>`}
         <div class="b"><b>${esc(title(t))}</b><div class="muted sm">Unit ${esc(t.unit)} · ${fmt(t.miles)} mi</div><div class="good" style="font-weight:600;margin-top:4px">$${fmt(t.weekly || 1000)}/wk${months(t) ? " · " + months(t) + " mo" : ""}</div></div></a>`).join("") || `<div class="empty">No trucks available right now — check back soon.</div>`}</div>`;
   }
   scrollTo(0, 0);

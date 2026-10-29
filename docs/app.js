@@ -25,14 +25,15 @@ const stageMeta = {
   agreement:   {name: "Agreement out", color: "var(--amber)",      short: "Contract sent, awaiting signature"},
   downpayment: {name: "Down payment",  color: "var(--purple)",     short: "Signed, collecting down payment"},
   ready:       {name: "Ready",         color: "var(--purple)",     short: "Paid up, awaiting dispatch"},
+  reserved:    {name: "Reserved",      color: "var(--amber)",      short: "Sold, driver hasn't got the truck yet"},
   active:      {name: "Active lease",  color: "var(--accent)",     short: "Dispatched, running"},
 };
 const STAGES = Object.keys(stageMeta);
 const FLEETS = ["TTL", "DT", "VKL", "G7"];
-const SOLD_STATUSES = ["Active", "Reserved", "Accident", "Returned", "Paid off"];
+const SOLD_STATUSES = ["Active", "Accident", "Returned", "Paid off"];
 const COLLS = ["trucks", "drivers", "deals", "users"];
 // fields copied to the public driver ads page — nothing about drivers, deals, cost or salesmen
-const PUBLIC_TRUCK_FIELDS = ["unit", "year", "make", "model", "miles", "weekly", "term_weeks", "price_total", "apu", "warranty", "engine", "trans", "photos", "gallery_url"];
+const PUBLIC_TRUCK_FIELDS = ["unit", "year", "make", "model", "miles", "weekly", "term_weeks", "price_total", "apu", "warranty", "engine", "trans", "photos", "gallery_url", "thumb"];
 
 let S = {trucks: [], drivers: [], deals: [], users: [], activity: [], fees: {}, meta: {}};
 let me = null;
@@ -104,14 +105,16 @@ function nextId(list, prefix, start) {
 function truckStatus(t) {
   const u = String(t.unit);
   const s = S.deals.find(d => String(d.unit) === u && isSold(d) && (d.sold.status || "Active") !== "Returned");
+  const ret = !s && S.deals.find(d => String(d.unit) === u && isSold(d) && d.sold.status === "Returned");
+  if (ret && t.status !== "for_sale") return {kind: "hold", label: "Returned", deal: ret};
   if (s) return {kind: "sold", label: s.sold.status && s.sold.status !== "Active" ? "Sold · " + s.sold.status : "Sold", deal: s};
   if (t.status === "sold") return {kind: "sold", label: "Sold"};
-  const a = S.deals.find(d => String(d.unit) === u && d.stage === "active");
+  const a = S.deals.find(d => String(d.unit) === u && d.stage === "active" && !isSold(d));
   if (a) return {kind: "sold", label: "Under lease", deal: a};
   const p = S.deals.find(d => String(d.unit) === u && d.stage !== "working" && !isSold(d));
   if (p) {
-    const lbl = {assigned: "Assigned", agreement: "Agreement out", downpayment: "Collecting down", ready: "Ready to dispatch"}[p.stage];
-    return {kind: p.stage === "ready" || p.stage === "agreement" ? "hold" : "assigned", label: lbl, deal: p};
+    const lbl = {assigned: "Assigned", agreement: "Agreement out", downpayment: "Collecting down", ready: "Ready to dispatch", reserved: "Reserved"}[p.stage];
+    return {kind: ["ready", "agreement", "reserved"].includes(p.stage) ? "hold" : "assigned", label: lbl, deal: p};
   }
   if (t.status === "on_hold") return {kind: "hold", label: "On hold"};
   return {kind: "available", label: "For sale"};
@@ -152,7 +155,7 @@ function soldCalc(d) {
 }
 function soldTotals() {
   const all = soldDeals().map(d => ({d, c: soldCalc(d)}));
-  const active = all.filter(x => x.c.status === "Active" || x.c.status === "Reserved");
+  const active = all.filter(x => x.c.status === "Active");
   return {count: all.length, active: active.length,
     collected: all.reduce((a, x) => a + x.c.collected, 0), remaining: active.reduce((a, x) => a + x.c.remaining, 0),
     monthly: active.reduce((a, x) => a + x.c.monthly, 0), all, activeList: active};
@@ -260,7 +263,7 @@ function computeInsights() {
   });
   S.deals.filter(d => d.stage === "agreement" && !d.agreement_signed && daysSince(d.agreement_sent) >= 3 && daysSince(d.agreement_sent) < 9999).forEach(d =>
     add("amber", `${name(d.driver_id)}: agreement out ${daysSince(d.agreement_sent)} days`, "Chase the signature.", ["deal:" + d.id, "View"]));
-  const noAgent = S.deals.filter(d => (d.stage === "active" || isSold(d)) && !d.agent_id);
+  const noAgent = S.deals.filter(d => (d.stage === "active" || isSold(d)) && !d.agent_id && !d.seller);
   if (noAgent.length) add("blue", `${noAgent.length} active deal${noAgent.length > 1 ? "s" : ""} with no sales agent`, "Commission can't be credited until an agent is set.", ["sold", "Open"]);
   soldTotals().activeList.forEach(({d, c}) => {
     if (c.lastPay && daysSince(c.lastPay) > 14) add("red", `${name(d.driver_id)}: no payment in ${daysSince(c.lastPay)} days`, `Unit ${d.unit} · $${fmt(c.weekly)}/wk`, ["deal:" + d.id, "View"]);
@@ -273,7 +276,7 @@ function computeInsights() {
   if (noPhone.length) add("amber", `${noPhone.length} drivers with no phone number`, "", ["drivers", "Open"]);
   const badVin = S.trucks.filter(t => t.vin && String(t.vin).length !== 17);
   if (badVin.length) add("amber", `${badVin.length} trucks with invalid VIN`, badVin.slice(0, 5).map(t => "Unit " + t.unit).join(", "), ["inventory", "Open"]);
-  const names = {}; S.drivers.forEach(d => { const k = (d.name || "").trim().toLowerCase(); names[k] = (names[k] || 0) + 1; });
+  const names = {}; S.drivers.filter(d => !d.dup_ok).forEach(d => { const k = (d.name || "").trim().toLowerCase(); names[k] = (names[k] || 0) + 1; });
   const dupes = Object.entries(names).filter(([k, n]) => k && n > 1);
   if (dupes.length) add("amber", `${dupes.length} possible duplicate driver${dupes.length > 1 ? "s" : ""}`, dupes.map(([k]) => k).join(", "), ["drivers", "Open"]);
   if (!store?.demo && S.meta?.checked_at && daysSince(S.meta.checked_at) > 2) add("amber", "Claude's daily check hasn't run", "Last check " + daysSince(S.meta.checked_at) + " days ago.", null);
@@ -329,7 +332,7 @@ function renderInventory() {
   $("#invTbody").innerHTML = list.length ? list.map(({t, st, m}) => {
     const drv = st.deal ? driverBy(st.deal.driver_id) : null;
     return `<tr data-truck="${esc(t.unit)}">
-      <td class="u">${esc(t.unit)}</td><td>${esc(userBy(t.salesman)?.name || "—")}</td><td>${esc(t.year || "—")}</td>
+      <td class="u">${esc(t.unit)}</td><td>${esc(userBy(t.salesman)?.name || st.deal?.seller || userBy(st.deal?.agent_id)?.name || "—")}</td><td>${esc(t.year || "—")}</td>
       <td class="num">${fmt(t.miles)}</td><td>${m ? m + " mo" : "—"}</td><td class="num">${fmtC(t.price_total)}</td>
       <td><span class="pill ${st.kind}">${esc(st.label)}</span> ${drv ? esc(drv.name) : ""}</td>
       <td>${(t.photos || []).length ? "📷 " + t.photos.length : ""}</td></tr>`;
@@ -374,7 +377,7 @@ function dealCard(d) {
   const downPaid = (d.installments || []).filter(i => i.paid).reduce((a, i) => a + i.amount, 0);
   const downTot = (d.installments || []).reduce((a, i) => a + i.amount, 0);
   return `<div class="dcard" draggable="true" data-deal="${esc(d.id)}"><div class="n">${esc(drv.name || d.driver_id)}</div>
-    <div class="m">${d.unit != null && d.unit !== "" ? "Unit " + esc(d.unit) : "No truck yet"} · ${esc(drv.fleet || "")} · ${esc(userBy(d.agent_id)?.name || "no agent")}</div>
+    <div class="m">${d.unit != null && d.unit !== "" ? "Unit " + esc(d.unit) : "No truck yet"} · ${esc(drv.fleet || "")} · ${esc(userBy(d.agent_id)?.name || d.seller || "no agent")}</div>
     <div class="tags">${d.plan ? `<span class="pill">${esc(d.plan)}</span>` : ""}${downTot ? `<span class="pill">${fmtC(downPaid)}/${fmtC(downTot)}</span>` : ""}
     ${over ? `<span class="pill red">${over} overdue</span>` : open.length ? `<span class="pill">${open.length} task${open.length > 1 ? "s" : ""}</span>` : ""}</div></div>`;
 }
@@ -430,7 +433,7 @@ function renderSheet() {
       <dt>Truck</dt><dd>${d.unit != null && d.unit !== "" ? `<a href="#" data-truck="${esc(d.unit)}">Unit ${esc(d.unit)}</a> · ${esc([t.year, t.make, t.model].filter(Boolean).join(" "))}` : "—"}</dd>
       <dt>Stage</dt><dd>${isSold(d) ? "Sold" : `<select data-deal-field="stage" style="width:auto">${STAGES.map(s => `<option value="${s}" ${s === d.stage ? "selected" : ""}>${stageMeta[s].name}</option>`).join("")}</select>`}</dd>
       <dt>Plan</dt><dd>${esc(planParams(d.plan).label)}</dd>
-      <dt>Sales agent</dt><dd>${esc(userBy(d.agent_id)?.name || "—")}</dd>
+      <dt>Sales agent</dt><dd>${esc(userBy(d.agent_id)?.name || d.seller || "—")}</dd>
       <dt>Est. weekly gross</dt><dd>${fmtC(d.gross)}</dd>
       <dt>Created</dt><dd>${esc((d.created || "").slice(0, 10))}</dd></dl>
       ${isSold(d) ? "" : `<div class="secttl">Agreement checklist</div><div class="checklist">
@@ -488,7 +491,7 @@ function renderSold() {
   $("#soldList").innerHTML = `<div class="tablewrap"><div class="tscroll"><table><thead><tr><th>Unit</th><th>Driver</th><th>Sold</th><th>Status</th>
     <th class="num">Weekly</th><th>Paid</th><th class="num">Collected</th><th class="num">Remaining</th><th>Last payment</th></tr></thead><tbody>
     ${list.map(({d, c}) => `<tr data-deal="${esc(d.id)}"><td class="u">${esc(d.unit)}</td><td>${esc(driverBy(d.driver_id)?.name || d.driver_id)}</td><td>${esc(d.sold.date || "—")}</td>
-      <td><span class="pill ${c.status === "Active" ? "available" : c.status === "Paid off" ? "sold" : c.status === "Reserved" ? "hold" : "red"}">${esc(c.status)}</span></td>
+      <td><span class="pill ${c.status === "Active" ? "available" : c.status === "Paid off" ? "sold" : "red"}">${esc(c.status)}</span></td>
       <td class="num">${fmtC(c.weekly)}</td><td><div class="progress" title="${c.weeksPaid}/${c.termW} weeks"><i style="width:${(c.pct * 100).toFixed(0)}%"></i></div><span class="faint sm">${c.weeksPaid}/${c.termW || "?"} wks</span></td>
       <td class="num">${fmtC(c.collected)}</td><td class="num">${fmtC(c.remaining)}</td><td class="${c.lastPay && daysSince(c.lastPay) > 14 ? "bad" : ""}">${esc(c.lastPay || "—")}</td></tr>`).join("")
       || `<tr><td colspan="9" class="empty">No sold trucks yet — click "+ Add sold truck" or send Claude the list.</td></tr>`}
@@ -798,7 +801,8 @@ function driverForm(d) {
     }, isNew || !isAdmin() ? "" : `<button class="btn danger" data-act="deleteDriver" data-id="${esc(d.id)}">Delete</button>`);
 }
 function soldForm(d) {
-  const s = d?.sold || {status: "Active", date: todayStr()};
+  // a reserved deal carries its agreed terms; marking it sold starts from them
+  const s = d?.sold || (d?.terms ? {...d.terms, status: "Active", date: todayStr()} : {status: "Active", date: todayStr()});
   const drvName = d ? driverBy(d.driver_id)?.name : "";
   form(d ? (d.sold ? `Sale terms · ${esc(d.id)}` : `Mark sold · ${esc(drvName)}`) : "Add sold truck", [
     ...(d ? [] : [{k: "driver_name", l: "Driver name", req: true, ph: "existing or new"}, {k: "unit", l: "Unit", req: true}, {k: "year", l: "Year", type: "number"}, {k: "vin", l: "VIN"}]),

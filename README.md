@@ -54,6 +54,28 @@ It runs `dispatch.py check --telegram`. The result goes to Joey's Telegram Saved
 6. Backs up all collections to `backups/YYYY-MM-DD.json` on this PC (30 days kept, never committed).
 7. Lists today's items: overdue follow-ups, cold deals, sold trucks with no payment in 14+ days, and for-sale trucks without photos.
 
+## Weekly truck payments (scheduled task `dispatch-friday-payments`, Fridays 10 AM)
+
+`dispatch.py statements` reads the posted Datatruck driver statements of the last 14 days. It finds each sold truck's **truck_payment** deduction (the "recurrents" and "scheduled" charges, plus the statement's own deduction lines) and adds it to that deal's payment log as "ST-xxxxx (dt:<charge id>)". It also adds 1 to `weeks_paid` and the amount to `paid_to_date`.
+
+- The charge ID makes the sync idempotent, so running it twice never counts a payment twice.
+- Only payments dated after 2026-10-29 are added. Earlier ones are already in the sold sheet totals.
+- The payee can be the driver who runs the buyer's truck (for example Orzu Trans 3625 → Christopher Merchant). The note keeps the statement number, so this can be traced.
+
+## Photos
+
+Truck photos come from the truck gallery, https://truck-gallery-a56f2b.netlify.app, through its public `/api/trucks` API. Trucks are matched by VIN, else by unit.
+
+- Each truck stores up to 12 photo URLs, a thumbnail and `gallery_url`, the "See all photos" link on the ads page.
+- `dispatch.py photos` refreshes them, and so does the daily check.
+
+## Reserved
+
+A **Reserved** pipeline column holds trucks that are sold but not yet delivered to the driver (for-sale sheet: "Got the truck: Not yet").
+
+- The agreed terms sit on the deal as `terms`.
+- "Mark as sold" starts from those terms.
+
 ## Claude's tool: `tools/dispatch.py`
 
 Run it with `C:\Users\Joey\claude\tools\.venv\Scripts\python.exe`.

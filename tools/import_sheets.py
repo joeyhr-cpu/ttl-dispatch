@@ -101,8 +101,9 @@ def main():
                 if t.get("vin") and t["vin"] != vin:
                     warn.append(f"Unit {t['unit']}: sheet VIN {t['vin']} != Datatruck {vin} (using Datatruck)")
                 t["vin"] = vin
-            t.setdefault("make", (d.get("make") or "").title().replace("Freight Liner", "Freightliner") or None)
-            t.setdefault("model", d.get("model"))
+            # Datatruck spells these many ways (Frht, FRHT, CASCADIA...); the fleet is Freightliner Cascadia
+            t.setdefault("make", "Freightliner")
+            t.setdefault("model", "Cascadia")
             t.setdefault("year", d.get("year"))
         g = D.gallery_match(t, by_unit, by_vin)
         if g:
@@ -152,7 +153,11 @@ def main():
         drv = drivers.setdefault(key, {"name": " ".join(name.split()), "phone": ph, "position": "LO", "fleet": "G7"})
         if ph and not drv.get("phone"):
             drv["phone"] = ph
-        status = r[c["Status"]].strip().title() or {"yes": "Active", "not yet": "Reserved"}.get(got.get(str(u), ""), "Active")
+        # "Got the truck: Not yet" in the for-sale sheet = sold but not delivered -> Reserved column of the pipeline
+        reserved = got.get(str(u)) == "not yet"
+        status = r[c["Status"]].strip().title() or "Active"
+        if status == "Reserved":
+            status = "Active"
         if status not in D.SOLD_STATUSES:
             warn.append(f"Unit {u}: status '{status}' -> Active")
             status = "Active"
@@ -165,13 +170,13 @@ def main():
         sold.setdefault("payments", [])
         if not sold.get("loan") and sold.get("price") is not None:
             sold["loan"] = sold["price"] - (sold.get("down") or 0)
-        deals.append({"_drv": key, "unit": u, "seller": r[c["Seller"]].strip() or None, "sold": sold,
+        deals.append({"_drv": key, "unit": u, "seller": r[c["Seller"]].strip() or None, "sold": sold, "reserved": reserved,
                       "_truck": {"unit": u, "year": num(r[c["Year"]]), "vin": (r[c["VIN"]].strip().upper() or None)}})
 
     # ---- merge into records
     s = D.store()
     existing_t = {str(t["unit"]) for t in s.all("trucks")}
-    existing_d = {d.get("name", "").lower(): d for d in s.all("drivers")}
+    existing_d = {(d.get("name", "").lower(), d.get("phone")): d for d in s.all("drivers")}
     if existing_t or s.all("deals"):
         warn.append(f"app already has {len(existing_t)} trucks - existing records are merged, not duplicated")
     sold_units = {str(d["unit"]) for d in deals}
@@ -194,7 +199,7 @@ def main():
     all_drivers = s.all("drivers")
     out_drivers = []
     for k, v in drivers.items():
-        cur = existing_d.get(v["name"].lower())
+        cur = existing_d.get((v["name"].lower(), v.get("phone")))
         did = cur["id"] if cur else D.next_id(all_drivers + out_drivers, "D-", 101)
         rec = {"id": did, **{x: y for x, y in v.items() if y}}
         out_drivers.append(rec)
@@ -206,12 +211,17 @@ def main():
         did = drv_ids[d["_drv"]]
         cur = have.get((did, str(d["unit"])))
         rid = cur["id"] if cur else D.next_id(all_deals + out_deals, "S-", 1001)
-        out_deals.append({"id": rid, "driver_id": did, "unit": d["unit"], "stage": "active", "seller": d["seller"],
-                          "activated": d["sold"].get("date"), "sold": d["sold"], "notes": [], "tasks": []})
+        if d["reserved"]:
+            terms = {k: v for k, v in d["sold"].items() if k not in ("status", "payments")}
+            out_deals.append({"id": rid, "driver_id": did, "unit": d["unit"], "stage": "reserved", "seller": d["seller"],
+                              "terms": terms, "notes": [], "tasks": []})
+        else:
+            out_deals.append({"id": rid, "driver_id": did, "unit": d["unit"], "stage": "active", "seller": d["seller"],
+                              "activated": d["sold"].get("date"), "sold": d["sold"], "notes": [], "tasks": []})
 
     forsale = [t for t in out_trucks if str(t["unit"]) in trucks and str(t["unit"]) not in sold_units]
     print(f"trucks: {len(out_trucks)} ({len(forsale)} for sale), with photos: {sum(1 for t in out_trucks if t.get('photos'))}, with VIN: {sum(1 for t in out_trucks if t.get('vin'))}")
-    print(f"drivers: {len(out_drivers)}   sold deals: {len(out_deals)}  ({', '.join(f'{k} {sum(1 for d in out_deals if d['sold']['status'] == k)}' for k in D.SOLD_STATUSES)})")
+    print(f"drivers: {len(out_drivers)}   sold deals: {len(out_deals)}  ({', '.join(f'{k} {sum(1 for d in out_deals if d.get("sold", {}).get("status") == k)}' for k in D.SOLD_STATUSES)}, reserved {sum(1 for d in out_deals if d['stage'] == 'reserved')})")
     no_photo = [str(t["unit"]) for t in forsale if not t.get("photos")]
     print(f"for-sale trucks without gallery photos: {', '.join(no_photo) or 'none'}")
     for w in warn:
@@ -227,7 +237,7 @@ def main():
     for r in out_deals:
         r = {k: v for k, v in r.items() if v is not None}
         r.setdefault("created", D.now_iso())
-        s.put("deals", r["id"], r)
+        s.put("deals", r["id"], r, merge=False)
     s.log(f"imported {len(out_trucks)} trucks, {len(out_drivers)} drivers and {len(out_deals)} sold trucks from Joey's sheets")
     n = D.publish(quiet=True)
     print(f"written. ads page now lists {n} trucks")
