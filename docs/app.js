@@ -1126,7 +1126,9 @@ function startApp() {
   };
   $("#loginForm").addEventListener("submit", async e => {
     e.preventDefault(); $("#loginErr").textContent = "";
-    try { await store.auth.signInWithEmailAndPassword($("#loginEmail").value.trim(), $("#loginPw").value); }
+    const em = $("#loginEmail").value.replace(/[\s​-‍﻿]/g, "");
+    if (/[^\x21-\x7E]/.test(em)) return ($("#loginErr").textContent = "The email has non-English letters (keyboard layout?). Switch to English and type it again.");
+    try { await store.auth.signInWithEmailAndPassword(em, $("#loginPw").value); }
     catch (x) { $("#loginErr").textContent = /password|credential|user-not-found/.test(x.code) ? "Wrong email or password." : x.message; }
   });
   $("#loginForgot").addEventListener("click", async () => {
@@ -1139,9 +1141,10 @@ function startApp() {
   const OWNER = String(window.OWNER_EMAIL || "").toLowerCase();
   $("#loginOwner").hidden = !OWNER;
   $("#loginOwner").addEventListener("click", async () => {
-    const em = $("#loginEmail").value.trim().toLowerCase(), pw = $("#loginPw").value;
-    if (em !== OWNER) return ($("#loginErr").textContent = "Only the owner (" + OWNER + ") can set up here. Others are invited by an admin.");
-    if (pw.length < 8) return ($("#loginErr").textContent = "Choose a password of at least 8 characters.");
+    // always the owner's address, so a look-alike letter typed on another keyboard layout can't break setup
+    const em = OWNER, pw = $("#loginPw").value;
+    $("#loginEmail").value = OWNER;
+    if (pw.length < 8) return ($("#loginErr").textContent = "Type the password you want (at least 8 characters), then click this button again.");
     try {
       const cred = await store.auth.createUserWithEmailAndPassword(em, pw);
       await cred.user.sendEmailVerification();
