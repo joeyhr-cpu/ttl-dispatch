@@ -35,6 +35,7 @@ def main():
     js = ROOT / "docs" / "config.js"
     js.write_text("// Firebase web config: public by design (security is enforced by firestore.rules, not by hiding this).\n"
                   f"window.FIREBASE_CONFIG = {json.dumps(web, indent=2)};\n"
+                  'window.OWNER_EMAIL = "joey@taylorfreight.com";  // may create the first admin profile (see firestore.rules)\n'
                   'window.APP_NAME = "TTL Dispatch";\nwindow.APP_BRAND = "TTL";\n', encoding="utf-8")
     print(f"wrote {js} for project {web['projectId']}")
 
