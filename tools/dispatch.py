@@ -581,7 +581,9 @@ def datatruck_odometers():
         for t in r["results"]:
             u = str(t.get("unit_number") or "").strip().rstrip(".").lstrip("0")
             if u and t.get("odometer") is not None:
-                out.setdefault(u, (t["odometer"], t.get("status")))
+                # Datatruck keeps old inactive duplicates (VIN padded with dots): the active record wins
+                if u not in out or (out[u][1] == "inactive" and t.get("status") != "inactive"):
+                    out[u] = (t["odometer"], t.get("status"))
         if not r.get("next"):
             return out
         page += 1
