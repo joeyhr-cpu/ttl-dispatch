@@ -48,6 +48,8 @@ PROJECT = "ttl-dispatch"
 # Both are secrets: they live in tools/, never in the repo.
 OAUTH_CLIENT = TOOLS / "dispatch-oauth-client.json"
 OAUTH_TOKEN = TOOLS / "dispatch-oauth-token.json"
+# Firebase app-user login for unattended runs (`dispatch.py connect`): survives the org's Cloud session control
+APP_TOKEN = TOOLS / "dispatch-app-token.json"
 SCOPES = ["https://www.googleapis.com/auth/datastore", "https://www.googleapis.com/auth/firebase",
           "https://www.googleapis.com/auth/identitytoolkit"]
 BACKUPS = ROOT / "backups"
@@ -138,6 +140,128 @@ class FirestoreStore:
         self.db.collection("activity").add({"ts": now_iso(), "who": who, "what": what})
 
 
+def _fs_encode(v):
+    if v is None:
+        return {"nullValue": None}
+    if isinstance(v, bool):
+        return {"booleanValue": v}
+    if isinstance(v, int):
+        return {"integerValue": str(v)}
+    if isinstance(v, float):
+        return {"doubleValue": v}
+    if isinstance(v, dict):
+        return {"mapValue": {"fields": {k: _fs_encode(x) for k, x in v.items()}}}
+    if isinstance(v, (list, tuple)):
+        return {"arrayValue": {"values": [_fs_encode(x) for x in v]}}
+    return {"stringValue": str(v)}
+
+
+def _fs_decode(v):
+    (kind, x), = v.items()
+    if kind == "integerValue":
+        return int(x)
+    if kind == "mapValue":
+        return {k: _fs_decode(y) for k, y in (x.get("fields") or {}).items()}
+    if kind == "arrayValue":
+        return [_fs_decode(y) for y in (x.get("values") or [])]
+    if kind == "nullValue":
+        return None
+    return x
+
+
+class AppUserStore:
+    """Firestore over REST, signed in as Joey's own app user (Firebase Auth refresh token from
+    `dispatch.py connect`). The org's Google Cloud session control expires the OAuth login within
+    days; Firebase app logins are not subject to it. firestore.rules apply (Joey is admin)."""
+
+    class _Users:
+        """`user` command helper: app users are looked up in the users collection."""
+        class UserNotFoundError(Exception):
+            pass
+
+        def __init__(self, st):
+            self.st = st
+
+        def get_user_by_email(self, email):
+            u = next((x for x in self.st.all("users") if str(x.get("email", "")).lower() == email.lower()), None)
+            if not u:
+                raise self.UserNotFoundError(email)
+            return type("U", (), {"uid": u["id"]})
+
+        def update_user(self, uid, disabled):
+            pass  # access is cut by users/{uid}.active=false (firestore.rules)
+
+    def __init__(self):
+        import requests
+        self.http = requests.Session()
+        cfg = json.loads(APP_TOKEN.read_text(encoding="utf-8"))
+        self.api_key, self.refresh = cfg["api_key"], cfg["refresh_token"]
+        self.base = f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents"
+        self.token, self.exp = None, 0
+        self.auth = self._Users(self)
+
+    def _hdr(self):
+        import time
+        if time.time() > self.exp - 120:
+            r = self.http.post(f"https://securetoken.googleapis.com/v1/token?key={self.api_key}",
+                               data={"grant_type": "refresh_token", "refresh_token": self.refresh}, timeout=30)
+            if r.status_code != 200:
+                sys.exit(f"app login expired or revoked ({r.json().get('error', {}).get('message')}): run `dispatch.py connect`")
+            j = r.json()
+            self.token, self.exp = j["id_token"], time.time() + int(j["expires_in"])
+            if j["refresh_token"] != self.refresh:
+                self.refresh = j["refresh_token"]
+                cfg = json.loads(APP_TOKEN.read_text(encoding="utf-8"))
+                cfg["refresh_token"] = self.refresh
+                APP_TOKEN.write_text(json.dumps(cfg), encoding="utf-8")
+        return {"Authorization": f"Bearer {self.token}"}
+
+    def _call(self, method, url, **kw):
+        r = self.http.request(method, url, headers=self._hdr(), timeout=60, **kw)
+        if r.status_code == 404 and method == "GET":
+            return None
+        if r.status_code >= 300:
+            sys.exit(f"Firestore {method} {url.split('/documents')[-1]}: HTTP {r.status_code} {r.text[:300]}")
+        return r.json() if r.text else {}
+
+    @staticmethod
+    def _doc(d):
+        return {k: _fs_decode(v) for k, v in (d.get("fields") or {}).items()}
+
+    def all(self, coll):
+        out, token = [], None
+        while True:
+            j = self._call("GET", f"{self.base}/{coll}", params={"pageSize": 300, **({"pageToken": token} if token else {})}) or {}
+            for d in j.get("documents", []):
+                rec = self._doc(d)
+                if coll == "users":
+                    rec["id"] = d["name"].rsplit("/", 1)[-1]
+                out.append(rec)
+            token = j.get("nextPageToken")
+            if not token:
+                return out
+
+    def get(self, coll, key):
+        d = self._call("GET", f"{self.base}/{coll}/{urllib.parse.quote(str(key), safe='')}")
+        return self._doc(d) if d else None
+
+    def put(self, coll, key, doc, merge=True):
+        body = {"fields": {k: _fs_encode(v) for k, v in doc.items()}}
+        params = [("updateMask.fieldPaths", f"`{k}`" if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) else k) for k in doc] if merge else []
+        self._call("PATCH", f"{self.base}/{coll}/{urllib.parse.quote(str(key), safe='')}", params=params, json=body)
+
+    def remove(self, coll, key):
+        self._call("DELETE", f"{self.base}/{coll}/{urllib.parse.quote(str(key), safe='')}")
+
+    def activity(self, limit=200):
+        q = {"structuredQuery": {"from": [{"collectionId": "activity"}], "orderBy": [{"field": {"fieldPath": "ts"}, "direction": "DESCENDING"}], "limit": limit}}
+        rows = self._call("POST", f"{self.base}:runQuery", json=q) or []
+        return [self._doc(r["document"]) for r in rows if r.get("document")]
+
+    def log(self, what, who="Claude"):
+        self._call("POST", f"{self.base}/activity", json={"fields": {"ts": _fs_encode(now_iso()), "who": _fs_encode(who), "what": _fs_encode(what)}})
+
+
 class JsonStore:
     """Same interface over a folder of JSON files (DISPATCH_DATA_DIR) for offline tests."""
     def __init__(self, folder):
@@ -201,7 +325,12 @@ _store = None
 def store():
     global _store
     if _store is None:
-        _store = JsonStore(os.environ["DISPATCH_DATA_DIR"]) if os.environ.get("DISPATCH_DATA_DIR") else FirestoreStore()
+        if os.environ.get("DISPATCH_DATA_DIR"):
+            _store = JsonStore(os.environ["DISPATCH_DATA_DIR"])
+        elif APP_TOKEN.exists():
+            _store = AppUserStore()
+        else:
+            _store = FirestoreStore()
     return _store
 
 
@@ -822,6 +951,54 @@ def cmd_login(a):
     print(f"saved {OAUTH_TOKEN.name}")
 
 
+CONNECT_PAGE = """<!doctype html><meta charset="utf-8"><title>Connect Claude to TTL Dispatch</title>
+<style>body{font:15px system-ui;background:#0e1416;color:#e7ece8;display:grid;place-items:center;min-height:100vh;margin:0}
+form{background:#161d20;padding:28px;border-radius:12px;width:330px;display:flex;flex-direction:column;gap:10px}
+input,button{font:inherit;padding:9px;border-radius:7px;border:1px solid #2c3b40;background:#12181b;color:inherit}
+button{background:#7bc142;color:#0e1416;font-weight:600;border:0;cursor:pointer}#m{min-height:20px;color:#e0a458}</style>
+<form id=f><b>Connect Claude's tool to TTL Dispatch</b><small>Sign in with your own app account. This page runs only on this PC;
+the password goes straight to Firebase. Claude's tool keeps only a sign-in token.</small>
+<input id=e type=email value="joey@taylorfreight.com"><input id=p type=password placeholder="Your app password" autofocus>
+<button>Connect</button><div id=m></div></form>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script>firebase.initializeApp(__CFG__);
+f.onsubmit=async ev=>{ev.preventDefault();m.textContent="Connecting...";
+try{const c=await firebase.auth().signInWithEmailAndPassword(e.value.trim(),p.value);p.value="";
+await fetch("/token",{method:"POST",body:JSON.stringify({refresh_token:c.user.refreshToken,uid:c.user.uid,email:c.user.email})});
+f.innerHTML="<b>Connected.</b><small>You can close this tab.</small>"}catch(x){m.textContent=x.message}}</script>"""
+
+
+def cmd_connect(a):
+    """One-time: Joey signs in on a localhost page; the app-user refresh token is saved for unattended runs."""
+    import http.server
+    import webbrowser
+    cfg_js = (ROOT / "docs" / "config.js").read_text(encoding="utf-8")
+    cfg = json.loads(re.search(r"FIREBASE_CONFIG = (\{.*?\});", cfg_js, re.S).group(1))
+    page = CONNECT_PAGE.replace("__CFG__", json.dumps(cfg)).encode()
+    done = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *x):
+            pass
+
+        def do_GET(self):
+            self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(page)
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            APP_TOKEN.write_text(json.dumps({"api_key": cfg["apiKey"], "refresh_token": body["refresh_token"], "uid": body["uid"], "email": body["email"]}), encoding="utf-8")
+            done["email"] = body["email"]
+            self.send_response(204); self.end_headers()
+
+    srv = http.server.HTTPServer(("localhost", 8790), H)
+    print("open http://localhost:8790 and sign in (waiting...)")
+    webbrowser.open("http://localhost:8790")
+    while "email" not in done:
+        srv.handle_request()
+    print(f"connected as {done['email']}; saved {APP_TOKEN.name}")
+
+
 def cmd_init(a):
     """One-time setup on a new Firebase project: default fees, meta, public config."""
     s = store()
@@ -859,6 +1036,7 @@ def main():
     s = sp.add_parser("check"); s.add_argument("--telegram", action="store_true"); s.add_argument("--no-site", action="store_true"); s.set_defaults(f=cmd_check)
     s = sp.add_parser("init"); s.set_defaults(f=cmd_init)
     s = sp.add_parser("login"); s.set_defaults(f=cmd_login)
+    s = sp.add_parser("connect", help="one-time app sign-in for unattended runs"); s.set_defaults(f=cmd_connect)
     a = ap.parse_args()
     a.f(a)
 
