@@ -574,19 +574,24 @@ function inPeriod(ts) {
   return true;
 }
 const isKpiEligible = d => isSold(d) || (d.stage === "active" && d.agreement_signed && d.escrow_paid && (d.installments || []).every(i => i.paid));
+// $1,000 (fees.commission) per sold truck, credited to the deal's agent: an app user, or the Seller name from Joey's sheet.
+// Returned trucks earn nothing. A sale counts in the period of its sold date.
+const agentName = d => userBy(d.agent_id)?.name || (d.seller || "").trim() || "No seller";
 function renderKpi() {
   $$("#kpiPeriod button").forEach(b => b.classList.toggle("on", b.dataset.period === kpiPeriod));
-  const rows = S.users.filter(u => u.is_sales && u.active !== false).map(u => {
-    const deals = S.deals.filter(d => d.agent_id === u.id);
-    const closed = deals.filter(d => isKpiEligible(d) && inPeriod(isSold(d) ? d.sold.date : d.activated));
-    return {u, closed: closed.length, comm: closed.length * (+S.fees.commission || 0)};
-  }).sort((a, b) => b.closed - a.closed);
+  const per = +S.fees.commission || 0;
+  const sales = S.deals.filter(d => isSold(d) && d.sold.status !== "Returned" && inPeriod(d.sold.date || d.activated || d.created));
+  const by = {};
+  S.users.filter(u => u.is_sales && u.active !== false).forEach(u => { by[u.name] = {name: u.name, color: u.color, closed: 0, units: []}; });
+  sales.forEach(d => { const n = agentName(d); (by[n] ||= {name: n, closed: 0, units: []}); by[n].closed++; by[n].units.push(d.unit); });
+  const rows = Object.values(by).map(r => ({...r, comm: r.closed * per})).sort((a, b) => b.closed - a.closed || a.name.localeCompare(b.name));
   const max = Math.max(1, ...rows.map(r => r.closed));
   const badge = r => r.closed >= 10 ? "🏆" : r.closed >= 5 ? "🥇" : r.closed >= 1 ? "⭐" : "";
-  $("#kpiContent").innerHTML = `<div class="kpigrid g3">${kpiBox("Deals closed", rows.reduce((a, r) => a + r.closed, 0), "eligible for commission")}
-    ${kpiBox("Commission earned", fmtC(rows.reduce((a, r) => a + r.comm, 0)), fmtC(S.fees.commission) + " per truck")}${kpiBox("Open deals", openDeals().length, "in pipeline")}</div>
-    <div class="card"><div class="card-head"><h3>Leaderboard</h3></div><div class="leader">
-    ${rows.map((r, i) => `<div class="lr"><b class="mono">${i + 1}</b><span>${esc(r.u.name)} ${badge(r)}</span><div class="lbw"><div class="lb" style="width:${(r.closed / max * 100).toFixed(0)}%;background:${esc(r.u.color || "var(--accent)")}"></div></div><span class="mono">${r.closed} · ${fmtC(r.comm)}</span></div>`).join("") || `<div class="empty">No sales users.</div>`}
+  const total = rows.reduce((a, r) => a + r.closed, 0);
+  $("#kpiContent").innerHTML = `<div class="kpigrid g3">${kpiBox("Trucks sold", total, kpiPeriod === "all" ? "all time" : kpiPeriod === "year" ? "this year" : "this month")}
+    ${kpiBox("Commission", fmtC(total * per), fmtC(per) + " per sold truck")}${kpiBox("Open deals", openDeals().length, "in pipeline")}</div>
+    <div class="card"><div class="card-head"><h3>Leaderboard</h3><span class="muted sm">Seller from the sold sheet or the deal's agent</span></div><div class="leader">
+    ${rows.map((r, i) => `<div class="lr" title="Units: ${esc(r.units.join(", "))}"><b class="mono">${i + 1}</b><span>${esc(r.name)} ${badge(r)}</span><div class="lbw"><div class="lb" style="width:${(r.closed / max * 100).toFixed(0)}%;background:${esc(r.color || "var(--accent)")}"></div></div><span class="mono">${r.closed} · ${fmtC(r.comm)}</span></div>`).join("") || `<div class="empty">No sales in this period.</div>`}
     </div></div>`;
 }
 
