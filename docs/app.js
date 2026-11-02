@@ -123,7 +123,7 @@ function driverContactStatus(d) {
   const deals = S.deals.filter(x => x.driver_id === d.id);
   const act = deals.find(x => x.stage === "active" || isSold(x));
   if (act) return {kind: "active", label: "Active lease", cls: "available", deal: act};
-  const pipe = deals.find(x => ["assigned", "agreement", "downpayment", "ready"].includes(x.stage));
+  const pipe = deals.find(x => ["assigned", "agreement", "downpayment", "ready", "reserved"].includes(x.stage));
   if (pipe) return {kind: "pipeline", label: "In pipeline · " + stageMeta[pipe.stage].name, cls: "hold", deal: pipe};
   const w = deals.find(x => x.stage === "working");
   if (w) return {kind: "working", label: "Being worked", cls: "assigned", deal: w};
@@ -550,7 +550,7 @@ function renderDrivers() {
     $("#driverTable").innerHTML = `<div class="tablewrap"><div class="tscroll"><table><thead><tr><th>Name</th><th>Fleet</th><th>Position</th><th>Phone</th><th>Status</th><th>Truck</th><th>Salesman</th><th></th></tr></thead><tbody>
       ${list.map(({d, cs}) => `<tr data-driver="${esc(d.id)}"><td><b>${esc(d.name)}</b></td><td>${esc(d.fleet || "—")}</td><td>${esc([d.position, d.pay].filter(Boolean).join(" · ") || "—")}</td>
         <td class="mono">${esc(d.phone || "—")}</td><td><span class="pill ${cs.cls}">${esc(cs.label)}</span></td><td>${cs.deal?.unit != null ? "Unit " + esc(cs.deal.unit) : "—"}</td>
-        <td>${esc(userBy(d.salesman)?.name || "—")}</td><td>${actions(d)}</td></tr>`).join("") || `<tr><td colspan="8" class="empty">No drivers yet.</td></tr>`}</tbody></table></div></div>`;
+        <td>${esc(userBy(d.salesman)?.name || (cs.deal && agentName(cs.deal) !== "No seller" ? agentName(cs.deal) : "—"))}</td><td>${actions(d)}</td></tr>`).join("") || `<tr><td colspan="8" class="empty">No drivers yet.</td></tr>`}</tbody></table></div></div>`;
   }
 }
 function openDriver(id) {
@@ -559,7 +559,7 @@ function openDriver(id) {
   const cs = driverContactStatus(d);
   modal(esc(d.name), `<dl class="kv"><dt>Fleet</dt><dd>${esc(d.fleet || "—")}</dd><dt>Position / pay</dt><dd>${esc([d.position, d.pay].filter(Boolean).join(" · ") || "—")}</dd>
     <dt>Phone</dt><dd>${d.phone ? `<a href="tel:${esc(d.phone)}">${esc(d.phone)}</a>` : "—"}</dd><dt>Email</dt><dd>${esc(d.email || "—")}</dd>
-    <dt>CDL</dt><dd>${esc(d.cdl || "—")}</dd><dt>Tenure</dt><dd>${esc(d.tenure || "—")}</dd><dt>Salesman</dt><dd>${esc(userBy(d.salesman)?.name || "—")}</dd><dt>Status</dt><dd>${esc(cs.label)}</dd><dt>Notes</dt><dd>${esc(d.notes || "—")}</dd></dl>`,
+    <dt>CDL</dt><dd>${esc(d.cdl || "—")}</dd><dt>Tenure</dt><dd>${esc(d.tenure || "—")}</dd><dt>Salesman</dt><dd>${esc(userBy(d.salesman)?.name || (cs.deal && agentName(cs.deal) !== "No seller" ? agentName(cs.deal) : "—"))}</dd><dt>Status</dt><dd>${esc(cs.label)}</dd><dt>Notes</dt><dd>${esc(d.notes || "—")}</dd></dl>`,
     `<button class="btn" data-act="copyDriver" data-id="${esc(d.id)}">Copy info</button><button class="btn" data-act="editDriver" data-id="${esc(d.id)}">Edit</button>
      ${cs.deal ? `<button class="btn primary" data-deal="${esc(cs.deal.id)}">Open deal</button>` : `<button class="btn primary" data-act="newDeal" data-driver="${esc(d.id)}">Assign truck</button>`}`);
 }
