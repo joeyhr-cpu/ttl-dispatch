@@ -659,15 +659,26 @@ def statement_payments(days=14, only_units=None):
                 yield u, {**it, "st": st["settlement_number"], "payee": st.get("payee")}
 
 
+def _name_tokens(n):
+    return {w for w in re.sub(r"\(.*?\)", " ", str(n or "")).lower().replace(",", " ").replace("/", " ").split() if len(w) > 2}
+
+
 def sync_statements(days=14, dry=False):
     s = store()
     drivers = s.all("drivers")
     by_unit = {str(d["unit"]).lstrip("0"): d for d in s.all("deals")
                if d.get("sold") and (d["sold"].get("status") or "Active") == "Active" and d.get("unit") not in (None, "")}
-    added = []
+    drv_by_id = {x["id"]: x for x in drivers}
+    added, skipped = [], []
     for u, it in statement_payments(days, set(by_unit)):
         d = by_unit.get(u)
         if not d or it["date"] < d["sold"].get("statements_since", STATEMENTS_START):
+            continue
+        buyer = drv_by_id.get(d["driver_id"], {})
+        # a buyer who drives (has a Datatruck driver record) pays from his own statement; a deduction from another
+        # driver on that unit is lease rent, not a purchase payment. Owners/investors' trucks are run by others.
+        if buyer.get("datatruck_id") and len(_name_tokens(it["payee"]) & _name_tokens(buyer.get("name"))) < 2:
+            skipped.append((u, it))
             continue
         pays = d["sold"].setdefault("payments", [])
         if any(it["id"] in (p.get("note") or "") for p in pays):
@@ -678,6 +689,8 @@ def sync_statements(days=14, dry=False):
         added.append((u, it))
         if not dry:
             save_deal(d, f"recorded truck payment ${it['amount']:,.0f} from Datatruck {it['st']} on {deal_label(d, drivers)}")
+    for u, it in skipped:
+        print(f"skipped Unit {u}: ${it['amount'] or 0:,.0f} {it['date']} {it['st']} paid by {it['payee']} (not the buyer - lease rent?)")
     if not dry:
         s.put("config", "meta", {"statements_synced_at": now_iso()})
     return added
