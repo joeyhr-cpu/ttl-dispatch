@@ -653,7 +653,9 @@ def statement_payments(days=14, only_units=None):
         det = c.call("GET", f"/v1/salary/settlement-detail/{st['id']}/")
         for i, x in enumerate(det.get("deduction_list") or []):
             if _is_truck_payment(x.get("type")):
-                items.append({"id": f"dt:st{st['id']}:{i}", "date": hi, "amount": x.get("total_amount") or x.get("amount")})
+                # Datatruck's own line id is stable; the position on the statement changes when accounting edits it
+                key = f"dt:ded:{x['id']}" if x.get("id") else f"dt:st{st['id']}:{i}"
+                items.append({"id": key, "date": hi, "amount": x.get("total_amount") or x.get("amount")})
         for it in items:
             for u in units:
                 yield u, {**it, "st": st["settlement_number"], "payee": st.get("payee")}
@@ -682,6 +684,9 @@ def sync_statements(days=14, dry=False):
             continue
         pays = d["sold"].setdefault("payments", [])
         if any(it["id"] in (p.get("note") or "") for p in pays):
+            continue
+        # older entries used position ids (dt:stNNN:i): treat the same statement + amount as already recorded
+        if it["id"].startswith("dt:ded:") and any((p.get("note") or "").startswith(f"{it['st']} (dt:st") and p.get("amount") == it["amount"] for p in pays):
             continue
         pays.append({"date": it["date"], "amount": it["amount"], "method": "settlement", "note": f"{it['st']} ({it['id']})"})
         d["sold"]["weeks_paid"] = (d["sold"].get("weeks_paid") or 0) + 1
